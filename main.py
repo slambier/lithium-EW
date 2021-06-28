@@ -16,6 +16,8 @@ from astropy.io import ascii
 from scipy import optimize
 from lmfit import Model
 from lmfit.model import save_modelresult
+from shutil import move
+from tempfile import NamedTemporaryFile
 
 #--------------------------------------
 
@@ -98,13 +100,53 @@ def main():
         plotentries.append(plotfile)
             
         # Return wavelength and flux from ifile
-        wavelength, flux, error, hdr = readfits(file) 
+        # wavelength, flux, error, hdr = readfits(file) 
         # Plot
         #fullspectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
         #Lispectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
         #h_alpha_liplot(wavelength, flux, error, csvarray[row,:], plotfile)
-        #dopplershift(wavelength, flux, error, hdr, csvarray[row,:], plotfile)
+        #dopplershift(wavelength, flux, error, hdr, csvarray[row,:], plotfile)      
+
+
+    #-----------------------------------------------
+
+    # Writing Malo files for pyEW
+    maloentries = os.listdir("/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo")
+    for ientry in maloentries:
+    
+        title = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo/"+ ientry
+        file = ientry.strip('fits.gz')
+        
+        with fits.open(title) as hdu:
+            data = hdu[0].data # extract array of data
+            hdr = hdu[0].header # extract the header
             
+        lamb = data[0, :]
+        flux = data[1, :]
+
+        wavelength, flux = lidopplershift(lamb, flux)
+
+        table = {'wavelength': wavelength, 'flux': flux}
+    
+        filename = '/Users/samantha/Downloads/pyEW-master/malo/asc_files/' + file + '.asc'
+        ascii.write(table, filename, overwrite=True)
+        
+        with open('/Users/samantha/Downloads/pyEW-master/malo/spectra.list', 'ab') as spectra:
+            spectra.write((filename+'\n').encode("ascii"))
+            
+        temp_file = None
+        
+        with open(filename, 'r') as f_in:
+            with NamedTemporaryFile(mode='w', delete=False) as f_out:
+                temp_path = f_out.name
+                next(f_in)
+                for line in f_in:
+                    f_out.write(line)
+        
+        os.remove(filename)
+        move(temp_path, filename)     
+
+
     return
 
 
@@ -475,6 +517,69 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
     
     return
     
+
+#--------------------------------------
+
+def lidopplershift(wavelength, flux):
+    """
+    Corrects flux and wavelength for doppler shift of lithium line by Gaussian fitting the H-alpha line.
+    Inputs:
+    wavelength         Wavelength extracted from FITS file.
+    flux               Flux extracted from FITS file.
+
+    Outputs:
+    shiftliwv          Lithium wavelength corrected for Doppler shift.
+    liflx              Lithium flux corrected for Doppler shift.
+
+    """
+
+    # Crop data to H-alpha range
+    ha_lambcrop = np.where((wavelength > 656.00) & (wavelength < 657))
+    
+    lamb = wavelength[ha_lambcrop]
+    flx = flux[ha_lambcrop]
+
+    # Divide data by two to get rid of overlap
+    halfdata = len(lamb)//2
+
+    wvlen = lamb[:halfdata+1]
+    flx = flx[:halfdata+1]
+    
+
+    smthflx = moving_average(flx,4)
+    smthwvlen = moving_average(wvlen,4)
+
+
+    # Fit the Gaussian and output
+    gmodel = Model(gaussian)
+    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=-0.1, cen=656.3, wid=1)
+
+    values = []
+    for param in result.params.values():
+        #print(param.value)
+        values.append(param.value)
+    
+    # center of fit
+    cend = values[2]
+    cen = 656.28
+
+
+    wvlenshift = cen - cend
+    wvlens = wvlenshift + smthwvlen
+    c = 2.99792e5
+    ds = -np.log(wvlens/smthwvlen)*c
+
+    # Crop data for Li range
+    li_lambcrop = np.where((wavelength > 670) & (wavelength < 671))
+    # And make sure it is the same length as the H-alpha data
+    liwv = wavelength[li_lambcrop]
+    liwv = liwv[:len(ds)]
+    liflx = flux[li_lambcrop]
+    liflx = liflx[:len(ds)]
+    shiftliwv = liwv*np.exp(-ds/c)
+
+    return shiftliwv, liflx
+
 
 #--------------------------------------
 
