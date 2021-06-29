@@ -443,7 +443,7 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
 
     # Fit the Gaussian and output
     gmodel = Model(gaussian)
-    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=-0.1, cen=656.3, wid=1)
+    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=-0.1, cen=656.3, wid=0.1)
     report = result.fit_report()
 
     #print(report) 
@@ -552,7 +552,7 @@ def lidopplershift(wavelength, flux):
 
     # Fit the Gaussian and output
     gmodel = Model(gaussian)
-    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=-0.1, cen=656.3, wid=1)
+    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=0.5, cen=656.3, wid=0.1)
 
     values = []
     for param in result.params.values():
