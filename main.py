@@ -101,51 +101,25 @@ def main():
             
         # Return wavelength and flux from ifile
         # wavelength, flux, error, hdr = readfits(file) 
-        # Plot
-        #fullspectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
-        #Lispectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
-        #h_alpha_liplot(wavelength, flux, error, csvarray[row,:], plotfile)
-        #dopplershift(wavelength, flux, error, hdr, csvarray[row,:], plotfile)      
-
+        # # Plot
+        # #fullspectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
+        # #Lispectrumplot(wavelength, flux, error, csvarray[row,:], plotfile)
+        # #h_alpha_liplot(wavelength, flux, error, csvarray[row,:], plotfile)
+        # dopplershift(wavelength, flux, csvarray[row,:], plotfile, -0.1)      
 
     #-----------------------------------------------
 
-    # Writing Malo files for pyEW
-    maloentries = os.listdir("/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo")
-    for ientry in maloentries:
-    
-        title = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo/"+ ientry
-        file = ientry.strip('fits.gz')
-        
-        with fits.open(title) as hdu:
-            data = hdu[0].data # extract array of data
-            hdr = hdu[0].header # extract the header
-            
-        lamb = data[0, :]
-        flux = data[1, :]
+    # # Writing Malo files for pyEW
+    # maloentrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo"
+    # maloascpath = '/Users/samantha/Downloads/pyEW-master/malo/asc_files/'  
+    # malospectrapath = '/Users/samantha/Downloads/pyEW-master/malo/spectra.list'
+    # pyewfiles(maloentrypath, maloascpath, malospectrapath, 0.5)
 
-        wavelength, flux = lidopplershift(lamb, flux)
-
-        table = {'wavelength': wavelength, 'flux': flux}
-    
-        filename = '/Users/samantha/Downloads/pyEW-master/malo/asc_files/' + file + '.asc'
-        ascii.write(table, filename, overwrite=True)
-        
-        with open('/Users/samantha/Downloads/pyEW-master/malo/spectra.list', 'ab') as spectra:
-            spectra.write((filename+'\n').encode("ascii"))
-            
-        temp_file = None
-        
-        with open(filename, 'r') as f_in:
-            with NamedTemporaryFile(mode='w', delete=False) as f_out:
-                temp_path = f_out.name
-                next(f_in)
-                for line in f_in:
-                    f_out.write(line)
-        
-        os.remove(filename)
-        move(temp_path, filename)     
-
+    # # Writing Espadons files for pyEW
+    # lientrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/18BC22_raw_espadons"
+    # liascpath = '/Users/samantha/Downloads/pyEW-master/lithium/asc_files/'
+    # lispectrapath = '/Users/samantha/Downloads/pyEW-master/lithium/spectra.list'
+    # pyewfiles(lientrypath, liascpath, lispectrapath, -0.1)
 
     return
 
@@ -406,7 +380,7 @@ def moving_average(x, w):
 #--------------------------------------
 
 
-def dopplershift(wavelength, flux, error, hdr, stardata, title):
+def dopplershift(wavelength, flux, stardata, title, amp):
     """
     This function creates a plot of the spectrum provided in the FITS file,
     cropped to the relevant region for Lithium and H-alpha absorption and doppler shifted by gaussian fit.
@@ -414,9 +388,9 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
     Inputs:
     wavelength     Wavelength in nm
     flux           Outputted flux
-    error          Error of the flux
     stardata       Array with filename, star identifier, RA, DEC, spectral type, candidate type, and young association
     title          Title to name saved figure
+    amp            Amplitude estimate to be passed to Gaussian fit.
     
     Output:
     None
@@ -424,7 +398,7 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
     """
     
     # Crop data to H-alpha range
-    ha_lambcrop = np.where((wavelength > 656.00) & (wavelength < 657))
+    ha_lambcrop = np.where((wavelength > 655.08) & (wavelength < 657.48))
     
     lamb = wavelength[ha_lambcrop]
     flx = flux[ha_lambcrop]
@@ -443,7 +417,7 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
 
     # Fit the Gaussian and output
     gmodel = Model(gaussian)
-    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=-0.1, cen=656.3, wid=0.1)
+    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=amp, cen=656.3, wid=0.1)
     report = result.fit_report()
 
     #print(report) 
@@ -484,7 +458,7 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
     ax1.legend(loc='upper right')
     
     # Crop data for Li range
-    li_lambcrop = np.where((wavelength > 670) & (wavelength < 671))
+    li_lambcrop = np.where((wavelength > 669) & (wavelength < 672))
     # And make sure it is the same length as the H-alpha data
     liwv = wavelength[li_lambcrop]
     liwv = liwv[:len(ds)]
@@ -520,12 +494,13 @@ def dopplershift(wavelength, flux, error, hdr, stardata, title):
 
 #--------------------------------------
 
-def lidopplershift(wavelength, flux):
+def lidopplershift(wavelength, flux, amp):
     """
     Corrects flux and wavelength for doppler shift of lithium line by Gaussian fitting the H-alpha line.
     Inputs:
     wavelength         Wavelength extracted from FITS file.
     flux               Flux extracted from FITS file.
+    amp                Amplitude estimate to be passed to Gaussian fit.
 
     Outputs:
     shiftliwv          Lithium wavelength corrected for Doppler shift.
@@ -534,7 +509,7 @@ def lidopplershift(wavelength, flux):
     """
 
     # Crop data to H-alpha range
-    ha_lambcrop = np.where((wavelength > 656.00) & (wavelength < 657))
+    ha_lambcrop = np.where((wavelength > 655.08) & (wavelength < 657.48))
     
     lamb = wavelength[ha_lambcrop]
     flx = flux[ha_lambcrop]
@@ -552,7 +527,7 @@ def lidopplershift(wavelength, flux):
 
     # Fit the Gaussian and output
     gmodel = Model(gaussian)
-    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=0.5, cen=656.3, wid=0.1)
+    result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=amp, cen=656.3, wid=0.1)
 
     values = []
     for param in result.params.values():
@@ -570,7 +545,7 @@ def lidopplershift(wavelength, flux):
     ds = -np.log(wvlens/smthwvlen)*c
 
     # Crop data for Li range
-    li_lambcrop = np.where((wavelength > 670) & (wavelength < 671))
+    li_lambcrop = np.where((wavelength > 669) & (wavelength < 672))
     # And make sure it is the same length as the H-alpha data
     liwv = wavelength[li_lambcrop]
     liwv = liwv[:len(ds)]
@@ -582,6 +557,72 @@ def lidopplershift(wavelength, flux):
 
 
 #--------------------------------------
+
+# Writing Malo files for pyEW
+def pyewfiles(entrypath, ascpath, spectrapath, amp):
+    """
+    This function writes files for use in pyew from spectra.
+
+    Inputs:
+    entrypath           Full path to the folder in which the spectra are stored.
+    ascpath             Full path + "/" to where the asc files will be stored.
+    spectrapath         Full path to spectra.list.
+    amp                 Amplitude estimate to be passed to the Gaussian fit. (0.5 for Malo, -0.1 for other)
+    
+    Output:
+    None
+
+    
+    """
+
+    entries = os.listdir(entrypath)
+
+    # Lists for opening the file and plotting (strip fits)  
+    ientries = []
+
+    # Iterate over files in the folder 
+    for file in entries:
+        
+        # Only want reduced files ending in i
+        if file.endswith("i.fits.gz"): 
+            ientries.append(file) # append files ending in i
+
+    for ientry in ientries:
+    
+        title = entrypath + "/" + ientry
+        file = ientry.strip('fits.gz')
+        
+        with fits.open(title) as hdu:
+            data = hdu[0].data # extract array of data
+            
+        lamb = data[0, :]
+        flux = data[1, :]
+
+        wavelength, flux = lidopplershift(lamb, flux, amp)
+
+        table = {'wavelength': wavelength, 'flux': flux}
+    
+        filename = ascpath + file + '.asc'
+        ascii.write(table, filename, overwrite=True)
+        
+        with open(spectrapath, 'ab') as spectra:
+            spectra.write((filename+'\n').encode("ascii"))
+            
+        temp_file = None
+        
+        with open(filename, 'r') as f_in:
+            with NamedTemporaryFile(mode='w', delete=False) as f_out:
+                temp_path = f_out.name
+                next(f_in)
+                for line in f_in:
+                    f_out.write(line)
+        
+        os.remove(filename)
+        move(temp_path, filename)     
+
+
+#--------------------------------------
+
 
 if __name__ == "__main__":
     main()
