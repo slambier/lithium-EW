@@ -18,6 +18,7 @@ from lmfit import Model
 from lmfit.model import save_modelresult
 from shutil import move
 from tempfile import NamedTemporaryFile
+import scipy.integrate as integrate
 
 #--------------------------------------
 
@@ -109,19 +110,19 @@ def main():
 
     #-----------------------------------------------
 
-    # # Writing Malo files for pyEW
-    # maloentrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo"
-    # maloascpath = '/Users/samantha/Downloads/pyEW-master/malo/asc_files/'  
-    # malospectrapath = '/Users/samantha/Downloads/pyEW-master/malo/spectra.list'
-    # pyewfiles(maloentrypath, maloascpath, malospectrapath, 0.5)
+    # # Malo files for calculate_ew
+    maloentrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo"
+    maloplotpath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/MaloEW/"
 
-    # # Writing Espadons files for pyEW
-    # lientrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/18BC22_raw_espadons"
-    # liascpath = '/Users/samantha/Downloads/pyEW-master/lithium/asc_files/'
-    # lispectrapath = '/Users/samantha/Downloads/pyEW-master/lithium/spectra.list'
-    # pyewfiles(lientrypath, liascpath, lispectrapath, -0.1)
+    # # Espadons files for calcultae_ew
+    lientrypath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/18BC22_raw_espadons"
+    liplotpath = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/LiEW/"
+    
 
-    return
+    #maloew = calculate_ew(maloentrypath, maloplotpath, 0.5)
+    liew = calculate_ew(lientrypath, liplotpath, -0.1)
+
+    return 
 
 
 #--------------------------------------
@@ -418,7 +419,6 @@ def dopplershift(wavelength, flux, stardata, title, amp):
     # Fit the Gaussian and output
     gmodel = Model(gaussian)
     result = gmodel.fit(smthflx, x=smthwvlen, cont=0.85, amp=amp, cen=656.3, wid=0.1)
-    report = result.fit_report()
 
     #print(report) 
     
@@ -619,6 +619,131 @@ def pyewfiles(entrypath, ascpath, spectrapath, amp):
         
         os.remove(filename)
         move(temp_path, filename)     
+
+
+#--------------------------------------
+
+
+def slopedgaussian(x, slope, cont, amp, cen, wid):
+    """1-d gaussian: gaussian(x, slope, cont, amp, cen, wid)"""
+    return slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
+
+
+#--------------------------------------
+
+
+def calculate_ew(filepath, plotpath, amp):
+    """
+    Function which takes FITS files and calculates the Li equivalent widths. 
+    Saves a figure and returns an array containing file name and equivalent widths.
+
+    Input:
+    filepath              Full path to where FITS files are stored.
+    plotpath              Full path + "/" to where plots are saved.
+
+    Output: 
+    ewarray               2D numpy array containing file name and equivalent width.
+    
+    """
+    
+    ewarray = np.empty((0, 2), float)
+
+    files = os.listdir(filepath)
+    ifiles = []
+
+    # Iterate over files in the folder 
+    for file in files:
+        
+        # Only want reduced files ending in i
+        if file.endswith("i.fits.gz"): 
+            ifiles.append(file) # append files ending in i
+
+
+    for file in ifiles:
+        title = filepath + '/' + file
+        #print(file)
+
+        with fits.open(title) as fitsfile:
+            data = fitsfile[0].data
+            hdr = fitsfile[0].header
+        
+        objname = hdr["OBJNAME"]
+        lamb = data[0, :]
+        flux = data[1, :]
+
+        liwvlen, liflx = lidopplershift(lamb, flux, amp)
+
+        gmodel = Model(slopedgaussian)
+        result = gmodel.fit(liflx, x=liwvlen, slope=0, cont=0.6, amp=-0.2, cen=670.78, wid=0.08)
+
+        
+        # Take values of fitted Gaussian
+        values = []
+        for param in result.params.values():
+            #print(param.value)
+            values.append(param.value)
+
+        slope = values[0]
+        cont = values[1]
+        amp = values[2]
+        cen = values[3]
+        wid = values[4]
+
+        fwhm = 2*np.sqrt(2*np.log(2))*wid
+
+        # 2 curves to calculate area between (area of the Gaussian)
+        gauss = lambda x: slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
+
+        continuum = lambda x: slope*x + cont
+
+        x = np.linspace(670, 671.5, 500)
+
+        fx = gauss(x)
+        gx = continuum(x)
+
+        plt.clf()
+        plt.plot(x, fx, x, gx)
+        plt.plot(liwvlen, liflx, "k")
+        plt.fill_between(x, fx, gx)
+        plt.xlim((670, 671.25))
+        plt.title(objname)
+
+        fdu = integrate.quad(gauss, 670, 671.5)[0]
+        gdu = integrate.quad(continuum, 670, 671.5)[0]
+
+        area = gdu - fdu
+
+        rng = np.where((gx-fx)> 9e-3)[0]
+        if (len(rng) == 0) or (cen > 670.85) or (cen < 670.7):
+            #print("No Lithium present in %s." % file)
+            plotname = plotpath + "ewfail" + file.strip(".fits.gz")
+            plt.savefig(plotname)
+            
+        else:
+            start = rng[0]
+            end = rng[-1]
+
+        #     plt.axvline(x = x[start], c="r", linestyle="dashed")
+        #     plt.axvline(x = x[end], c="r", linestyle="dashed")
+
+            # Solving for equivalent width using area of trapezoid
+            a = gx[start]
+            b = gx[end]
+
+            ew = 2*area/(a+b)
+            ewarray = np.append(ewarray, np.array([[file, ew]]), axis=0)
+
+            c = cen - ew/2
+            d = cen + ew/2
+
+            plt.axvline(x = c, c="k", linestyle="dashed", label='EW = %.6f' %ew)
+            plt.axvline(x = d, c="k", linestyle="dashed")
+            plt.legend()
+
+            plotname = plotpath + "ew" + file.strip(".fits.gz")
+            plt.savefig(plotname)
+
+    return ewarray
 
 
 #--------------------------------------
