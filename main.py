@@ -14,11 +14,12 @@ from specutils import SpectralRegion
 from specutils.analysis import equivalent_width
 from astropy.io import ascii
 from scipy import optimize
-from lmfit import Model
+from lmfit import Model, Parameter
 from lmfit.model import save_modelresult
 from shutil import move
 from tempfile import NamedTemporaryFile
 import scipy.integrate as integrate
+
 
 #--------------------------------------
 
@@ -640,20 +641,20 @@ def calculate_ew(filepath, plotpath, amp):
     Input:
     filepath              Full path to where FITS files are stored.
     plotpath              Full path + "/" to where plots are saved.
+    amp                   Amplitude to be passed to lidopplershift.
 
     Output: 
     ewarray               2D numpy array containing file name and equivalent width.
     
     """
-    
-    ewarray = np.empty((0, 2), float)
 
     files = os.listdir(filepath)
     ifiles = []
+    ewarray = np.empty((0, 2), float)
 
     # Iterate over files in the folder 
     for file in files:
-        
+
         # Only want reduced files ending in i
         if file.endswith("i.fits.gz"): 
             ifiles.append(file) # append files ending in i
@@ -661,22 +662,35 @@ def calculate_ew(filepath, plotpath, amp):
 
     for file in ifiles:
         title = filepath + '/' + file
-        #print(file)
-
         with fits.open(title) as fitsfile:
             data = fitsfile[0].data
             hdr = fitsfile[0].header
-        
+
         objname = hdr["OBJNAME"]
         lamb = data[0, :]
         flux = data[1, :]
 
-        liwvlen, liflx = lidopplershift(lamb, flux, amp)
+        liwvlen, liflx = lidopplershift(lamb, flux, -0.1)
 
         gmodel = Model(slopedgaussian)
-        result = gmodel.fit(liflx, x=liwvlen, slope=0, cont=0.6, amp=-0.2, cen=670.78, wid=0.08)
+        #params = gmodel.make_params(slope=0, cont=0.6, amp=-0.2, cen=670.78, wid=0.08)
+        #params.set('cen', min=670.7, max=670.85)
 
-        
+        # do fit
+        result = gmodel.fit(liflx, x=liwvlen, slope=0, cont=0.6, amp=Parameter("amp", value=-0.3, max=1e-5), cen=Parameter("cen", value=670.78, min=670.7, max=670.85), wid=Parameter("wid", value=0.08, min=1e-2, max=0.09))
+
+
+        report = result.fit_report()
+
+        #print(report)
+        plt.clf()
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15,15))
+        ax1.plot(liwvlen, liflx, 'bo')
+        ax1.plot(liwvlen, result.init_fit, 'k--', label='initial fit')
+        ax1.plot(liwvlen, result.best_fit, 'r-', label='best fit')
+        ax1.set_xlim((670, 671.25))
+        ax1.legend(loc='best')
+
         # Take values of fitted Gaussian
         values = []
         for param in result.params.values():
@@ -686,10 +700,9 @@ def calculate_ew(filepath, plotpath, amp):
         slope = values[0]
         cont = values[1]
         amp = values[2]
-        cen = values[3]
-        wid = values[4]
+        cen = values[4]
+        wid = values[3]
 
-        fwhm = 2*np.sqrt(2*np.log(2))*wid
 
         # 2 curves to calculate area between (area of the Gaussian)
         gauss = lambda x: slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
@@ -701,12 +714,11 @@ def calculate_ew(filepath, plotpath, amp):
         fx = gauss(x)
         gx = continuum(x)
 
-        plt.clf()
-        plt.plot(x, fx, x, gx)
-        plt.plot(liwvlen, liflx, "k")
-        plt.fill_between(x, fx, gx)
-        plt.xlim((670, 671.25))
-        plt.title(objname)
+        ax2.plot(x, fx, x, gx)
+        ax2.plot(liwvlen, liflx, "k")
+        ax2.fill_between(x, fx, gx)
+        ax2.set_xlim((670, 671.25))
+        plt.suptitle(objname)
 
         fdu = integrate.quad(gauss, 670, 671.5)[0]
         gdu = integrate.quad(continuum, 670, 671.5)[0]
@@ -714,34 +726,37 @@ def calculate_ew(filepath, plotpath, amp):
         area = gdu - fdu
 
         rng = np.where((gx-fx)> 9e-3)[0]
-        if (len(rng) == 0) or (cen > 670.85) or (cen < 670.7):
-            #print("No Lithium present in %s." % file)
-            plotname = plotpath + "ewfail" + file.strip(".fits.gz")
-            plt.savefig(plotname)
-            
+        if len(rng) == 0:
+            plottitle = plotpath + "ew" + file.strip(".fits.gz")
         else:
+
             start = rng[0]
             end = rng[-1]
 
-        #     plt.axvline(x = x[start], c="r", linestyle="dashed")
-        #     plt.axvline(x = x[end], c="r", linestyle="dashed")
+#             ax2.axvline(x = x[start], c="r", linestyle="dashed")
+#             ax2.axvline(x = x[end], c="r", linestyle="dashed")
 
             # Solving for equivalent width using area of trapezoid
             a = gx[start]
             b = gx[end]
 
             ew = 2*area/(a+b)
-            ewarray = np.append(ewarray, np.array([[file, ew]]), axis=0)
+            ewma = ew*10000 
 
-            c = cen - ew/2
-            d = cen + ew/2
+            if ewma < 1000:
+                #print(ewma, "mA")
+                ewarray = np.append(ewarray, np.array([[file, ewma]]), axis=0)
 
-            plt.axvline(x = c, c="k", linestyle="dashed", label='EW = %.6f' %ew)
-            plt.axvline(x = d, c="k", linestyle="dashed")
-            plt.legend()
+                c = cen - ew/2
+                d = cen + ew/2
 
-            plotname = plotpath + "ew" + file.strip(".fits.gz")
-            plt.savefig(plotname)
+                ax2.axvline(x = c, c="k", linestyle="dashed", label='EW = %.3f' %ewma)
+                ax2.axvline(x = d, c="k", linestyle="dashed")
+                ax2.legend()
+            plottitle = plotpath + "ew" + file.strip(".fits.gz")
+
+        plt.savefig(plottitle)
+        plt.close()
 
     return ewarray
 
