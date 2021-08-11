@@ -17,8 +17,19 @@ def gaussian(x, cont, amp, cen, wid):
 #--------------------------------------
 
 
+
+def slopedgaussian(x, slope, cont, amp, cen, wid):
+    """1-d gaussian: gaussian(x, slope, cont, amp, cen, wid)"""
+    return slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
+
+
+#--------------------------------------
+
+
+
 def moving_average(x, w):
         return np.convolve(x, np.ones(w), 'valid') / w
+
 
 
 #--------------------------------------
@@ -87,16 +98,9 @@ def lidopplershift(wavelength, flux, error, amp):
     return shiftliwv, liflx, lierr
 
 
-#--------------------------------------
-
-
-
-def slopedgaussian(x, slope, cont, amp, cen, wid):
-    """1-d gaussian: gaussian(x, slope, cont, amp, cen, wid)"""
-    return slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
-
 
 #--------------------------------------
+
 
 
 def gaussianfit(wavelength, flux):
@@ -104,11 +108,11 @@ def gaussianfit(wavelength, flux):
     Function fits a gaussian to the data for the purpose of creating quicker paramater guesses.
     
     Inputs:     
-    wavelength
-    flux
+    wavelength         Wavelength extracted from FITS file.
+    flux               Flux extracted from FITS file.
     
     Output:
-    values
+    values             An array containing all the values of the variables used in slopedgaussian.
     """
 
     gmodel = Model(slopedgaussian)
@@ -130,12 +134,19 @@ def gaussianfit(wavelength, flux):
 
 
 
+
 def calculate_ew(wavelength, flux, params):
     """
     Function which takes FITS files and calculates the Li equivalent widths. 
     Saves a figure and returns an array containing file name and equivalent widths.
 
-    Input:
+    Inputs:
+    wavelength         Wavelength extracted from FITS file and shifted to correct for Doppler shift.
+    flux               Flux extracted from FITS file.
+    params             An array containing all the initial guesses of the variables used in slopedgaussian.       
+
+    Output:
+    ewma               Equivalent width in milli-Angstroms
     
     
     """
@@ -145,13 +156,13 @@ def calculate_ew(wavelength, flux, params):
     slope = params[0]
     cont = params[1]
     amp = params[2]
-    wid = params[3]
-    cen = params[4]
+    wid = params[4]
+    cen = params[3]
 
     # do fit
     result = gmodel.fit(flux, x=wavelength, slope=slope, cont=cont, amp=Parameter("amp", value=amp, max=1e-5), cen=Parameter("cen", value=cen, min=670.7, max=670.85), wid=Parameter("wid", value=wid, min=1e-2, max=0.09))
 
-
+    
     # Take values of fitted Gaussian
     values = []
     for param in result.params.values():
@@ -160,8 +171,8 @@ def calculate_ew(wavelength, flux, params):
     slope = values[0]
     cont = values[1]
     amp = values[2]
-    cen = values[4]
-    wid = values[3]
+    cen = values[3]
+    wid = values[4]
 
 
     # 2 curves to calculate area between (area of the Gaussian)
@@ -198,58 +209,43 @@ def calculate_ew(wavelength, flux, params):
 
 
 
-#--------------------------------------
+#-------------------------------------
 
 
 
-def ewerror(datafile, folder, amp, step):
+def ewerror(wavelength, flux, error, step):
     """
     This function calculates the error in the Lithium EW.
     
     Inputs:
-    datafile            Title of the file read.
-    folder              Either "MALO" or "LIEW"
-    amp                 Amplitude to pass to lidopplershift
-    step                Number of Monte Carlo loops to run
+    wavelength          Wavelength extracted from FITS file and shifted to correct for Doppler shift.
+    flux                Flux extracted from FITS file.
+    error               Error of the flux.
+    step                Number of Monte Carlo loops to run.
     
     Output:
-    ewerror             Error on the EW calculated using Monte Carlo
+    ewstdev             Standard deviation of the EWs calculated using Monte Carlo.
+    ewmabsdev           Median absolute deviation of the EWs calculated using Monte Carlo.
+    nannum              Number of nans encountered when calculating EWs.
     
     """
     
-    folder = folder.upper()
-    
-    if folder == "MALO":
-        title = '/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/reduced_Lison_Malo/' + datafile
-    elif folder == "LIEW":
-        title = '/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/18BC22_raw_espadons/' + datafile
-    
-    # import data
-    with fits.open(title) as file:
-        data = file[0].data
-
-    lamb = data[0, :]
-    flux = data[1, :]
-    error = data[4, :]
-
-    # doppler shift data
-    liwvlen, liflx, lierr = lidopplershift(lamb, flux, error, amp)
     
     # run Gaussian fit on base data
-    values = gaussianfit(liwvlen, liflx)
+    values = gaussianfit(wavelength, flux)
 
     # create noise for Monte Carlo
-    noise = np.random.normal(0, 1, (step, len(liwvlen)))
+    noise = np.random.normal(0, 1, (step, len(wavelength)))
 
     # new noisy data
-    sim_flux = noise*lierr + liflx
+    sim_flux = noise*error + flux
 
 
     noisy_ews = np.array([])
     nannumb = 0
     # iterate over rows and calculate EWs
     for row in sim_flux:
-        noisy_ew = calculate_ew(liwvlen, row,  values)
+        noisy_ew = calculate_ew(wavelength, row,  values)
         if math.isnan(noisy_ew):
             nannumb+=1
             

@@ -104,7 +104,7 @@ def main():
         params = gaussianfit(liwvlen, liflx)
         ew = calculate_ew(liwvlen, liflx, params)
         print(ew)
-        ewstdev, ewmabsdev, nannumb = ewerror(file, "liew", -0.1, 2500)
+        ewstdev, ewmabsdev, nannumb = ewerror(liwvlen, liflx, lierr, 2500)
 
         ew_values = np.append(ew_values, np.array([[ew, ewstdev, ewmabsdev, nannumb]]), axis=0)
 

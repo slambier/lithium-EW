@@ -209,7 +209,7 @@ def h_alpha_liplot(wavelength, flux, error, stardata, title):
     plt.suptitle(stardata[4],fontsize=24)
     
     # Save plot
-    plottitle = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/H-alpha_Li Spectrum Plots/" + title + "Lispectrumplot"
+    plottitle = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/H-alpha_Li Spectrum Plots/" + title + "HaLispectrumplot"
     plt.savefig(plottitle)
     
     plt.close()
@@ -337,133 +337,115 @@ def dopplershiftplot(wavelength, flux, stardata, title, amp):
 
 
 
-def plot_ew(filepath, plotpath, amp):
+def plot_ew(wavelength, flux, error, stardata, title, amp):
     """
     Function which takes FITS files and calculates the Li equivalent widths. 
     Saves a figure and returns an array containing file name and equivalent widths.
 
     Input:
-    filepath              Full path to where FITS files are stored.
-    plotpath              Full path + "/" to where plots are saved.
-    amp                   Amplitude to be passed to lidopplershift.
+    wavelength     Wavelength in nm
+    flux           Outputted flux
+    error          Error of the flux
+    stardata       Array with filename, star identifier, RA, DEC, spectral type, candidate type, and young association
+    title          Title to name saved figure
+    amp            Amplitude estimate to be passed to Gaussian fit
 
     Output: 
-    ewarray               2D numpy array containing file name and equivalent width.
+    None
     
     """
 
-    files = os.listdir(filepath)
-    ifiles = []
-    ewarray = np.empty((0, 2), float)
+    liwvlen, liflx, lierr = lidopplershift(wavelength, flux, error, amp)
 
-    # Iterate over files in the folder 
-    for file in files:
+    gmodel = Model(slopedgaussian)
 
-        # Only want reduced files ending in i
-        if file.endswith("i.fits.gz"): 
-            ifiles.append(file) # append files ending in i
+    # do fit
+    result = gmodel.fit(liflx, x=liwvlen, slope=0, cont=0.6, amp=Parameter("amp", value=-0.3, max=1e-5), cen=Parameter("cen", value=670.78, min=670.7, max=670.85), wid=Parameter("wid", value=0.08, min=1e-2, max=0.09))
 
 
-    for file in ifiles:
-        title = filepath + '/' + file
-        with fits.open(title) as fitsfile:
-            data = fitsfile[0].data
-            hdr = fitsfile[0].header
+    #print(report)
+    plt.clf()
+    fig = plt.figure(figsize=(15, 10))
+    ax = plt.gca()
 
-        objname = hdr["OBJNAME"]
-        lamb = data[0, :]
-        flux = data[1, :]
-        err = data[4, :]
+    # Take values of fitted Gaussian
+    values = []
+    for param in result.params.values():
+        #print(param.value)
+        values.append(param.value)
 
-        liwvlen, liflx, lierr = lidopplershift(lamb, flux, err, -0.1)
-
-        gmodel = Model(slopedgaussian)
-   
-        # do fit
-        result = gmodel.fit(liflx, x=liwvlen, slope=0, cont=0.6, amp=Parameter("amp", value=-0.3, max=1e-5), cen=Parameter("cen", value=670.78, min=670.7, max=670.85), wid=Parameter("wid", value=0.08, min=1e-2, max=0.09))
-
-
-        #print(report)
-        plt.clf()
-        fig = plt.figure(figsize=(10, 10))
-        ax = plt.gca()
-
-        # Take values of fitted Gaussian
-        values = []
-        for param in result.params.values():
-            #print(param.value)
-            values.append(param.value)
-
-        slope = values[0]
-        cont = values[1]
-        amp = values[2]
-        cen = values[4]
-        wid = values[3]
+    slope = values[0]
+    cont = values[1]
+    amp = values[2]
+    cen = values[4]
+    wid = values[3]
 
 
-        # 2 curves to calculate area between (area of the Gaussian)
-        gauss = lambda x: slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
+    # 2 curves to calculate area between (area of the Gaussian)
+    gauss = lambda x: slope*x + cont + (amp / (np.sqrt(2*np.pi) * wid)) * np.exp(-(x-cen)**2 / (2*wid**2))
 
-        continuum = lambda x: slope*x + cont
+    continuum = lambda x: slope*x + cont
 
-        x = np.linspace(670, 671.5, 500)
+    x = np.linspace(670, 671.5, 500)
 
-        fx = gauss(x)
-        gx = continuum(x)
+    fx = gauss(x)
+    gx = continuum(x)
 
-        plt.plot(x, fx, x, gx)
-        plt.plot(liwvlen, liflx, "k")
-        plt.fill_between(x, fx, gx)
-        plt.xlim((670, 671.25))
+    plt.plot(x, fx, x, gx)
+    plt.plot(liwvlen, liflx, "k")
+    plt.fill_between(x, fx, gx)
+    plt.xlim((670, 671.25))
 
-        # Set axes colours
-        ax.tick_params(which="major", size=7, labelsize=18, width=3)
-        #ax.tick_params(which="minor", size=5, labelsize=12, width=2, direction='in', top=True, right=True)
+    # Set axes colours
+    ax.tick_params(which="major", size=7, labelsize=18, width=3)
+    
+    # Axes widths
+    for axis in ['top','bottom','left','right']:
+        ax.spines[axis].set_linewidth(2)
 
-        # Axes widths
-        for axis in ['top','bottom','left','right']:
-            ax.spines[axis].set_linewidth(2)
+    plt.xlabel("Wavelength (nm)", fontsize=16)
+    plt.ylabel("Flux", fontsize=16)
+
+    fdu = integrate.quad(gauss, 670, 671.5)[0]
+    gdu = integrate.quad(continuum, 670, 671.5)[0]
+
+    area = gdu - fdu
+
+    rng = np.where((gx-fx)> 9e-3)[0]
+    if len(rng) == 0:
+        plottitle = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/LiEW/" + title
+    else:
+        start = rng[0]
+        end = rng[-1]
+
+        # Solving for equivalent width using area of trapezoid
+        a = gx[start]
+        b = gx[end]
+
+        ew = 2*area/(a+b)
+        ewma = ew*10000 
+
+        if ewma < 1000:
+
+            c = cen - ew/2
+            d = cen + ew/2
+
+            plt.axvline(x = c, c="k", linestyle="dashed", label='EW = %.3f $m\AA$' %ewma)
+            plt.axvline(x = d, c="k", linestyle="dashed")
+            plt.legend(fontsize=14)
+            plt.fill_between(x, fx, gx, where=(x > c) & (x < d), color="navy")
+            plottitle = "/Users/samantha/OneDrive - The University of Western Ontario/Research Summer 2021/LiEW/" + title
+
+    # Title and subtitle
+    subtitle = "RA: " + stardata[2] + "    DEC: " + stardata[3] + "    Spectral Type: " + stardata[5] + "    Candidate Type: " + stardata[6] + "    Young Association: " + stardata[7]
+    plt.title(subtitle,fontsize=16, c="k")
+    plt.suptitle(stardata[4],fontsize=24, c="k")
             
-        plt.title(objname, fontsize=20)
-        plt.xlabel("Wavelength (nm)", fontsize=16)
-        plt.ylabel("Flux", fontsize=16)
 
-        fdu = integrate.quad(gauss, 670, 671.5)[0]
-        gdu = integrate.quad(continuum, 670, 671.5)[0]
+    plt.savefig(plottitle)
+    #plt.close()
 
-        area = gdu - fdu
-
-        rng = np.where((gx-fx)> 9e-3)[0]
-        if len(rng) == 0:
-            plottitle = plotpath + "ew" + file.strip(".fits.gz")
-        else:
-            start = rng[0]
-            end = rng[-1]
-
-            # Solving for equivalent width using area of trapezoid
-            a = gx[start]
-            b = gx[end]
-
-            ew = 2*area/(a+b)
-            ewma = ew*10000 
-
-            if ewma < 1000:
-                #print(ewma, "mA")
-                ewarray = np.append(ewarray, np.array([[file, ewma]]), axis=0)
-
-                c = cen - ew/2
-                d = cen + ew/2
-
-                plt.axvline(x = c, c="k", linestyle="dashed", label='EW = %.3f $m\AA$' %ewma)
-                plt.axvline(x = d, c="k", linestyle="dashed")
-                plt.legend(fontsize=14)
-                plt.fill_between(x, fx, gx, where=(x > c) & (x < d), color="navy")
-            plottitle = plotpath + "ew" + file.strip(".fits.gz")
-
-        plt.savefig(plottitle)
-        plt.close()
-
-    return ewarray
+    return 
 
 
 
